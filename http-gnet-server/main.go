@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
-	"runtime"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -28,28 +30,47 @@ type httpCodec struct {
 	buf           []byte
 }
 
-var CRLF = []byte("\r\n\r\n")
+var (
+	CRLF      = []byte("\r\n\r\n")
+	lastChunk = []byte("0\r\n\r\n")
+)
 
-func (hc *httpCodec) parse(data []byte) (int, error) {
-	// Perform a legit HTTP request parsing.
+func (hc *httpCodec) parse(data []byte) (int, []byte, error) {
 	bodyOffset, err := hc.parser.Parse(data)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
-	// First check if the Content-Length header is present.
 	contentLength := hc.getContentLength()
 	if contentLength > -1 {
-		return bodyOffset + contentLength, nil
+		bodyEnd := bodyOffset + contentLength
+		var body []byte
+		if len(data) >= bodyEnd {
+			body = data[bodyOffset:bodyEnd]
+		}
+		return bodyEnd, body, nil
 	}
 
-	// If the Content-Length header is not found,
-	// we need to find the end of the body section.
+	// Transfer-Encoding: chunked
+	if idx := bytes.Index(data[bodyOffset:], lastChunk); idx != -1 {
+		bodyEnd := idx + 5
+		var body []byte
+		if len(data) >= bodyEnd {
+			req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(data[:bodyEnd])))
+			if err != nil {
+				return bodyEnd, nil, err
+			}
+			body, _ = io.ReadAll(req.Body)
+		}
+		return bodyEnd, body, nil
+	}
+
+	// Requests without a body.
 	if idx := bytes.Index(data, CRLF); idx != -1 {
-		return idx + 4, nil
+		return idx + 4, nil, nil
 	}
 
-	return 0, errors.New("invalid http request")
+	return 0, nil, errors.New("invalid http request")
 }
 
 var contentLengthKey = []byte("Content-Length")
@@ -79,10 +100,16 @@ func (hc *httpCodec) reset() {
 	hc.buf = hc.buf[:0]
 }
 
-func (hc *httpCodec) appendResponse() {
+func writeResponse(hc *httpCodec, body []byte) {
+	// You may want to determine the URL path and write the corresponding response.
+	// ...
+
 	hc.buf = append(hc.buf, "HTTP/1.1 200 OK\r\nServer: gnet\r\nContent-Type: text/plain\r\nDate: "...)
 	hc.buf = time.Now().AppendFormat(hc.buf, "Mon, 02 Jan 2006 15:04:05 GMT")
-	hc.buf = append(hc.buf, "\r\nContent-Length: 12\r\n\r\nHello World!"...)
+	hc.buf = append(hc.buf, "\r\nContent-Length: "...)
+	hc.buf = append(hc.buf, strconv.Itoa(len(body))...)
+	hc.buf = append(hc.buf, "\r\n\r\n"...)
+	hc.buf = append(hc.buf, body...)
 }
 
 func (hs *httpServer) OnBoot(eng gnet.Engine) gnet.Action {
@@ -96,29 +123,35 @@ func (hs *httpServer) OnOpen(c gnet.Conn) ([]byte, gnet.Action) {
 	return nil, gnet.None
 }
 
+var msg = []byte("Hello, World!")
+
 func (hs *httpServer) OnTraffic(c gnet.Conn) gnet.Action {
 	hc := c.Context().(*httpCodec)
-	buf, _ := c.Next(-1)
+	buf, _ := c.Peek(-1)
+	n := len(buf)
 
 pipeline:
-	nextOffset, err := hc.parse(buf)
+	nextOffset, _, err := hc.parse(buf)
+	hc.resetParser()
 	if err != nil {
+		log.Println("parse error:", err)
 		goto response
 	}
-	hc.resetParser()
-	hc.appendResponse()
+	if len(buf) < nextOffset {
+		goto response
+	}
+	writeResponse(hc, msg)
 	buf = buf[nextOffset:]
 	if len(buf) > 0 {
 		goto pipeline
 	}
 response:
-	c.Write(hc.buf)
+	if len(hc.buf) > 0 {
+		c.Write(hc.buf)
+	}
 	hc.reset()
+	c.Discard(n - len(buf))
 	return gnet.None
-}
-
-func init() {
-	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
 }
 
 func main() {
