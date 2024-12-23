@@ -51,6 +51,7 @@ eval "$(pkill -9 -f echo-net || printf "")"
 eval "$(pkill -9 -f echo-evio || printf "")"
 eval "$(pkill -9 -f echo-netpoll || printf "")"
 eval "$(pkill -9 -f echo-gnet || printf "")"
+eval "$(pkill -9 -f echo-uio || printf "")"
 
 conn_num=$1
 test_duration=$2
@@ -91,9 +92,12 @@ function go_bench() {
   echo ""
   echo "--- BENCHMARK DONE ---"
   echo ""
+
+  sleep 10
 }
 
 go_bench "GO-NET" bin/echo-net-server echo-net-server/main.go 7000
 go_bench "EVIO" bin/echo-evio-server echo-evio-server/main.go 7001 -1
 go_bench "GNET" bin/echo-gnet-server echo-gnet-server/main.go 7002 true
 go_bench "NETPOLL" bin/echo-netpoll-server echo-netpoll-server/main.go 7003
+go_bench "UIO" bin/echo-uio-server echo-uio-server/main.go 7004 0

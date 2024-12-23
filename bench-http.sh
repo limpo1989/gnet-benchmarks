@@ -20,6 +20,7 @@ $(pkill -9 -f http-net-server || printf "")
 $(pkill -9 -f http-fasthttp-server || printf "")
 $(pkill -9 -f http-evio-server || printf "")
 $(pkill -9 -f http-gnet-server || printf "")
+$(pkill -9 -f http-uio-server || printf "")
 
 function gobench() {
   echo "--- $1 ---"
@@ -42,9 +43,12 @@ function gobench() {
   wrk -H 'Host: 127.0.0.1' -H 'Accept: text/plain,text/html;q=0.9,application/xhtml+xml;q=0.9,application/xml;q=0.8,*/*;q=0.7' -H 'Connection: keep-alive' --latency -d 15 -c 256 --timeout 8 -t 4 http://127.0.0.1:$4/plaintext -s pipeline.lua -- 16
   echo "--- DONE ---"
   echo ""
+
+  sleep 10
 }
 
 gobench "GO-HTTP" bin/http-net-server http-net-server/main.go 8081
 gobench "FASTHTTP" bin/http-fasthttp-server http-fasthttp-server/main.go 8083
 gobench "EVIO" bin/http-evio-server http-evio-server/main.go 8084 -1
 gobench "GNET" bin/http-gnet-server http-gnet-server/main.go 8085 true
+gobench "UIO" bin/http-uio-server http-uio-server/main.go 8086 0
